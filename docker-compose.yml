@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  telegram-bot:
+    build: .
+    container_name: brainrot-bubble-bot
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - ./temp:/app/temp
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G 

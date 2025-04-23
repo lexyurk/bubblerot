@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Telegram Bubble Brainrot Overlay</title>
+  <style>
+    /* Center everything */
+    html, body {
+      height: 100%;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+
+    /* Wrapper keeps the video and canvas aligned */
+    .bubble-wrapper {
+      position: relative;
+      width: 320px;   /* Adjust to taste */
+      height: 320px;  /* Keep square for circular mask */
+    }
+
+    /* Video is rounded to appear as a Telegram bubble */
+    .bubble-wrapper video {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+
+    /* Canvas overlays the video */
+    .bubble-wrapper canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="bubble-wrapper">
+    <!-- Replace with your own video if desired -->
+    <video id="bubbleVid" src="test-bubble.mp4" autoplay muted loop playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <script>
+    const video = document.getElementById('bubbleVid');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+
+    // === CONFIGURABLE SETTINGS ===
+    const RING_COUNT = 4;           // How many concentric rings
+    const BASE_RING_RADIUS = 60;    // Innermost ring radius in px
+    const RING_SPACING = 40;        // Distance between consecutive rings in px
+    const RING_WIDTH = 12;          // Stroke width of each ring
+    const HOLE_ARC = Math.PI / 4;   // Gap size (in radians) for each ring
+    const BALL_RADIUS = 6;          // Radius of the bouncing ball
+    const BALL_SPEED = 120;         // Ball speed in px/s
+
+    /**
+     * Ring data structure
+     * {
+     *   radius: number,
+     *   width: number,
+     *   holeSize: number,  // radians
+     *   angle: number,     // radians (current rotation)
+     *   speed: number,     // radians / second
+     *   color: string,     // CSS rgba value
+     * }
+     */
+    const rings = [];
+
+    const ball = {
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      radius: BALL_RADIUS,
+    };
+
+    // Resize handler ensures the canvas matches the element size and accounts for HiDPI displays
+    function resizeCanvas() {
+      const { width, height } = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // Scale drawing operations
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    // Initialize rings with alternating rotation directions and random starting angles
+    function initRings() {
+      rings.length = 0;
+      for (let i = 0; i < RING_COUNT; i++) {
+        const radius = BASE_RING_RADIUS + i * RING_SPACING;
+        rings.push({
+          radius,
+          width: RING_WIDTH,
+          holeSize: HOLE_ARC,
+          angle: Math.random() * Math.PI * 2,
+          // Alternate direction: even rings clockwise, odd counter‑clockwise
+          speed: (i % 2 === 0 ? 1 : -1) * (0.3 + i * 0.1),
+          color: 'rgba(255, 255, 255, 0.4)',
+        });
+      }
+    }
+
+    // (Re)spawn the ball in the center with a random direction
+    function resetBall() {
+      const { width, height } = canvas.getBoundingClientRect();
+      ball.x = width / 2;
+      ball.y = height / 2;
+      const angle = Math.random() * Math.PI * 2;
+      ball.vx = Math.cos(angle) * BALL_SPEED;
+      ball.vy = Math.sin(angle) * BALL_SPEED;
+    }
+
+    // Physics & animation update step
+    function update(dt) {
+      // Rotate rings
+      for (const ring of rings) {
+        ring.angle += ring.speed * dt;
+      }
+
+      // Move ball
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      const { width, height } = canvas.getBoundingClientRect();
+      const cx = width / 2;
+      const cy = height / 2;
+
+      // Vector from center to ball
+      let dx = ball.x - cx;
+      let dy = ball.y - cy;
+      let dist = Math.hypot(dx, dy);
+
+      // Check collision with each ring
+      for (const ring of rings) {
+        const innerBound = ring.radius - ring.width / 2 - ball.radius;
+        const outerBound = ring.radius + ring.width / 2 + ball.radius;
+        if (dist >= innerBound && dist <= outerBound) {
+          // Compute ball's angle relative to the ring's rotation
+          let angleRelative = Math.atan2(dy, dx) - ring.angle;
+          // Normalize to 0..2π
+          angleRelative = (angleRelative + Math.PI * 2) % (Math.PI * 2);
+
+          // If ball is NOT within the hole arc, bounce
+          if (angleRelative > ring.holeSize / 2 && angleRelative < Math.PI * 2 - ring.holeSize / 2) {
+            const nx = dx / dist; // Normal vector components
+            const ny = dy / dist;
+            const dot = ball.vx * nx + ball.vy * ny;
+            ball.vx -= 2 * dot * nx;
+            ball.vy -= 2 * dot * ny;
+
+            // Move the ball slightly after bounce to avoid jittering inside the ring
+            ball.x += ball.vx * dt;
+            ball.y += ball.vy * dt;
+
+            // Recompute values after bounce
+            dx = ball.x - cx;
+            dy = ball.y - cy;
+            dist = Math.hypot(dx, dy);
+          }
+        }
+      }
+
+      // If the ball escaped beyond the outermost ring + margin, respawn
+      const outermost = rings[rings.length - 1];
+      const maxRadius = outermost.radius + outermost.width + 20;
+      if (dist > maxRadius) {
+        resetBall();
+      }
+    }
+
+    // Render rings and ball on the canvas
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const { width, height } = canvas.getBoundingClientRect();
+      const cx = width / 2;
+      const cy = height / 2;
+
+      // Draw rings (stroke with missing gap)
+      for (const ring of rings) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(ring.angle);
+        ctx.strokeStyle = ring.color;
+        ctx.lineWidth = ring.width;
+        ctx.beginPath();
+        // Draw the visible part of the ring (two arcs on either side of the hole)
+        ctx.arc(0, 0, ring.radius, ring.holeSize / 2, 2 * Math.PI - ring.holeSize / 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Draw the ball
+      ctx.fillStyle = '#ff5050';
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Main animation loop
+    let lastTs = performance.now();
+    function loop(now) {
+      const dt = (now - lastTs) / 1000; // Delta time in seconds
+      lastTs = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // Kick things off once video metadata is ready (so we know intrinsic size)
+    video.addEventListener('loadedmetadata', () => {
+      resizeCanvas();
+      initRings();
+      resetBall();
+      requestAnimationFrame(loop);
+    });
+  </script>
+</body>
+</html> 

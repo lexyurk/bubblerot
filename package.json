@@ -1,0 +1,16 @@
+{
+  "name": "brainrot-bubble-generator",
+  "version": "1.0.0",
+  "description": "Generate MP4 with animated brain‑rot overlay on top of Telegram bubble video",
+  "main": "generateOverlay.js",
+  "scripts": {
+    "generate": "node generateOverlay.js test-bubble.mp4 output.mp4",
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.46",
+    "telegraf": "^4.15.3"
+  },
+  "type": "module",
+  "devDependencies": {}
+} 
