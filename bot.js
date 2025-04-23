@@ -11,10 +11,16 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 bot.start((ctx) => ctx.reply('Send me a bubble (circular) video and I\'ll add a brainrot overlay to it!'));
 
 // Helper function to process videos
-async function processVideo(ctx, fileId, messageType) {
+async function processVideo(ctx, fileId, messageType, deleteOriginal = false) {
   try {
-    // Let user know we're processing
-    const processingMessage = await ctx.reply('Processing your video...');
+    // Store the original message ID if we need to delete it
+    const originalMessageId = deleteOriginal ? ctx.message.message_id : null;
+    
+    // Skip sending "Processing your video..." message if deleteOriginal is true
+    let processingMessage = null;
+    if (!deleteOriginal) {
+      processingMessage = await ctx.reply('Processing your video...');
+    }
     
     // Get file ID and download info
     const fileInfo = await ctx.telegram.getFile(fileId);
@@ -37,12 +43,14 @@ async function processVideo(ctx, fileId, messageType) {
     // When download is complete, process the video
     download.on('close', async (code) => {
       if (code !== 0) {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id, 
-          processingMessage.message_id, 
-          null, 
-          'Error downloading your video.'
-        );
+        if (processingMessage) {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id, 
+            processingMessage.message_id, 
+            null, 
+            'Error downloading your video.'
+          );
+        }
         return;
       }
       
@@ -56,22 +64,36 @@ async function processVideo(ctx, fileId, messageType) {
       processor.on('close', async (code) => {
         try {
           if (code !== 0) {
+            if (processingMessage) {
+              await ctx.telegram.editMessageText(
+                ctx.chat.id, 
+                processingMessage.message_id, 
+                null, 
+                'Error processing your video.'
+              );
+            }
+            return;
+          }
+          
+          // Update processing message if we're not deleting the original
+          if (processingMessage) {
             await ctx.telegram.editMessageText(
               ctx.chat.id, 
               processingMessage.message_id, 
               null, 
-              'Error processing your video.'
+              'Here\'s your processed video!'
             );
-            return;
           }
           
-          // Send processed video back to user
-          await ctx.telegram.editMessageText(
-            ctx.chat.id, 
-            processingMessage.message_id, 
-            null, 
-            'Here\'s your processed video!'
-          );
+          // Delete the original message if requested
+          if (deleteOriginal && originalMessageId) {
+            try {
+              await ctx.telegram.deleteMessage(ctx.chat.id, originalMessageId);
+            } catch (deleteError) {
+              console.error('Error deleting original message:', deleteError);
+              // Continue with the rest of the processing regardless
+            }
+          }
           
           // Send as video note if original was a video note, otherwise as regular video
           if (messageType === 'video_note') {
@@ -91,30 +113,46 @@ async function processVideo(ctx, fileId, messageType) {
           
         } catch (error) {
           console.error('Error sending processed video:', error);
-          await ctx.reply('Sorry, there was an error sending your processed video.');
+          if (!deleteOriginal) {
+            await ctx.reply('Sorry, there was an error sending your processed video.');
+          }
         }
       });
     });
     
     download.on('error', async (err) => {
       console.error('Download error:', err);
-      await ctx.reply('Sorry, there was an error downloading your video.');
+      if (!deleteOriginal) {
+        await ctx.reply('Sorry, there was an error downloading your video.');
+      }
     });
     
   } catch (error) {
     console.error('Error handling video:', error);
-    await ctx.reply('Sorry, something went wrong while processing your video.');
+    if (!deleteOriginal) {
+      await ctx.reply('Sorry, something went wrong while processing your video.');
+    }
   }
 }
 
 // Handler for regular video messages
 bot.on(message('video'), async (ctx) => {
+  // Process normal videos with the regular flow (with text messages)
   await processVideo(ctx, ctx.message.video.file_id, 'video');
 });
 
 // Handler for bubble videos (video notes)
 bot.on(message('video_note'), async (ctx) => {
-  await processVideo(ctx, ctx.message.video_note.file_id, 'video_note');
+  // Check if message is from a group
+  const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+  
+  if (isGroup) {
+    // In groups: delete original and don't send text messages
+    await processVideo(ctx, ctx.message.video_note.file_id, 'video_note', true);
+  } else {
+    // In private chats: use the regular flow with text messages
+    await processVideo(ctx, ctx.message.video_note.file_id, 'video_note');
+  }
 });
 
 // Launch the bot
