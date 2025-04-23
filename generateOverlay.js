@@ -40,7 +40,7 @@ const FPS = Math.round(meta.fps);
 // Re‑compute animation constants based on size
 const SHORTER = Math.min(WIDTH, HEIGHT);
 const RING_COUNT = 25;
-const BASE_RING_RADIUS = SHORTER * 0.08;
+const BASE_RING_RADIUS = SHORTER * 0.25; // Larger central gap (50% of shorter dimension)
 const RING_SPACING = SHORTER * 0.016;
 const RING_WIDTH = SHORTER * 0.008;
 const HOLE_ARC = Math.PI / 3;
@@ -48,6 +48,16 @@ const BALL_RADIUS = SHORTER * 0.01;
 const BALL_SPEED = SHORTER * 0.5;
 const SUB_STEPS = 2;
 const BOUNCE_RANDOMNESS = 0.2;
+// --- Bounce energy parameters ---
+const MIN_ENERGY_FACTOR = 0.85;        // Minimum energy factor (slowdown)
+const MAX_ENERGY_FACTOR = 1.15;        // Maximum energy factor (speedup)
+const ENERGY_CHANCE_BOOST = 0.6;       // Chance of getting a speed boost
+const MIN_BALL_SPEED = SHORTER * 0.2;  // Minimum allowed ball speed
+const MAX_BALL_SPEED = SHORTER * 0.8;  // Maximum allowed ball speed
+const SPARKLE_COUNT = 18;              // number of particles when a ring is destroyed
+const SPARKLE_SPEED = SHORTER * 0.35;  // initial speed of sparkles
+const SPARKLE_LIFE = 0.7;              // seconds
+const RING_SHRINK_RATE = SHORTER * 0.008; // pixels per second each ring shrinks (reduced to slow down)
 
 function rand(min, max) { return Math.random()*(max-min)+min; }
 
@@ -55,8 +65,9 @@ const rings = [];
 function initializeRings() {
   rings.length = 0;
   for (let i=0;i<RING_COUNT;i++) {
+    const baseRadius = BASE_RING_RADIUS + i*RING_SPACING;
     rings.push({
-      radius: BASE_RING_RADIUS + i*RING_SPACING,
+      radius: baseRadius, // Use baseRadius directly, no center factor needed
       width: RING_WIDTH,
       holeSize: HOLE_ARC,
       angle: rand(0, Math.PI*2),
@@ -77,6 +88,23 @@ function resetBall() {
   rings.forEach(r => r.visible = true);
 }
 
+// ---------------- Sparkles -----------------
+const sparkles = [];
+function spawnSparkles(x,y){
+  for(let i=0;i<SPARKLE_COUNT;i++){
+    const ang = rand(0,Math.PI*2);
+    const spd = rand(0.4,1)*SPARKLE_SPEED;
+    sparkles.push({
+      x,y,
+      vx: Math.cos(ang)*spd,
+      vy: Math.sin(ang)*spd,
+      life: SPARKLE_LIFE,
+      maxLife: SPARKLE_LIFE
+    });
+  }
+}
+// -------------------------------------------
+
 function update(dt) {
   // Update ring rotations
   rings.forEach(r=> r.angle += r.speed*dt);
@@ -84,6 +112,8 @@ function update(dt) {
   // Divide the time step into smaller substeps for more accurate collision detection
   const subDt = dt / SUB_STEPS;
   
+  let passedThroughHoleInFrame = false; // Flag to track if a hole pass-through occurred in any substep
+
   for (let step = 0; step < SUB_STEPS; step++) {
     // Save previous position for line segment intersection tests
     const prevX = ball.x;
@@ -97,7 +127,8 @@ function update(dt) {
     let dx = ball.x-cx, dy = ball.y-cy;
     let dist = Math.hypot(dx,dy);
     
-    let hasCollided = false; // Track if a collision happened in this substep
+    let hasCollided = false; // Track if a bounce collision happened in this substep
+    let passedThroughHoleInSubstep = false; // Track if a hole pass-through happened in this substep
     
     for (const ring of rings) {
       if (!ring.visible) continue;
@@ -115,13 +146,13 @@ function update(dt) {
       const prevDy = prevY - cy;
       const prevDist = Math.hypot(prevDx, prevDy);
       
-      // Ball path crossed into or out of the ring's radial boundaries?
-      const crossedRingBoundary = 
-        (prevDist < ballCollisionZoneInner && dist >= ballCollisionZoneInner) ||
-        (prevDist > ballCollisionZoneOuter && dist <= ballCollisionZoneOuter) ||
-        (prevDist >= ballCollisionZoneInner && prevDist <= ballCollisionZoneOuter);
+      // Check if the ball *entered* the zone during this substep
+      const enteredCollisionZone =
+          (prevDist < ballCollisionZoneInner && dist >= ballCollisionZoneInner) || // Crossed inner boundary moving out
+          (prevDist > ballCollisionZoneOuter && dist <= ballCollisionZoneOuter);   // Crossed outer boundary moving in
       
-      if (inCollisionZone || crossedRingBoundary) {
+      // Only perform angular check if the ball is in the zone or just entered it
+      if (inCollisionZone || enteredCollisionZone) {
         // Current angle relative to ring's rotation
         let rel = Math.atan2(dy,dx) - ring.angle;
         rel = (rel + Math.PI * 2) % (Math.PI * 2);
@@ -134,7 +165,9 @@ function update(dt) {
         const solidPartStartAngle = (ring.holeSize / 2) + angularBallRadius;
         const solidPartEndAngle = (Math.PI * 2 - ring.holeSize / 2) - angularBallRadius;
         
-        if (rel > solidPartStartAngle && rel < solidPartEndAngle) {
+        const isInHole = (rel <= solidPartStartAngle || rel >= solidPartEndAngle);
+        
+        if (!isInHole) {
           // COLLISION DETECTED - Bounce logic
           hasCollided = true;
                     
@@ -145,6 +178,35 @@ function update(dt) {
           // Reflect velocity
           ball.vx -= 2*dot*nx;
           ball.vy -= 2*dot*ny;
+          
+          // Apply dynamic energy change - sometimes speed up, sometimes slow down
+          const energyFactor = rand(MIN_ENERGY_FACTOR, MAX_ENERGY_FACTOR);
+          // Apply energy bias - more likely to speed up if going slow, more likely to slow down if going fast
+          const currentSpeed = Math.hypot(ball.vx, ball.vy);
+          const speedRatio = currentSpeed / MAX_BALL_SPEED; // 0 to 1 ratio of current to max speed
+          
+          // Determine if we should boost (more likely for slow balls, less likely for fast ones)
+          const shouldBoost = Math.random() < (ENERGY_CHANCE_BOOST * (1 - speedRatio * 0.8));
+          
+          // Apply final energy change: boost or slow down
+          const finalFactor = shouldBoost ? Math.max(1.0, energyFactor) : Math.min(1.0, energyFactor);
+          
+          ball.vx *= finalFactor;
+          ball.vy *= finalFactor;
+          
+          // Ensure the ball doesn't get too slow or too fast
+          const newSpeed = Math.hypot(ball.vx, ball.vy);
+          if (newSpeed < MIN_BALL_SPEED) {
+            // Scale up to minimum speed
+            const scale = MIN_BALL_SPEED / newSpeed;
+            ball.vx *= scale;
+            ball.vy *= scale;
+          } else if (newSpeed > MAX_BALL_SPEED) {
+            // Scale down to maximum speed
+            const scale = MAX_BALL_SPEED / newSpeed;
+            ball.vx *= scale;
+            ball.vy *= scale;
+          }
           
           // Calculate current velocity angle and magnitude
           const curSpeed = Math.hypot(ball.vx, ball.vy);
@@ -176,15 +238,21 @@ function update(dt) {
           
           // Only check one collision per substep
           break;
-        } else if (inCollisionZone) {
-          // Ball is passing through the hole
+        } else if (enteredCollisionZone) {
+          // Ball is passing through the hole *and* has just entered the collision zone
           ring.visible = false;
+          spawnSparkles(ball.x,ball.y); // visual effect for destruction
+          passedThroughHoleInSubstep = true; // Mark that a pass-through happened
+          passedThroughHoleInFrame = true; // Mark for the whole frame
+          break;
         }
       }
     }
     
-    // If a collision occurred, no need to check the remaining substeps
-    if (hasCollided) break;
+    // If a bounce OR a pass-through happened in this substep, stop processing substeps for this frame
+    if (hasCollided || passedThroughHoleInSubstep) {
+        break;
+    }
   }
   
   // Check if ball is outside bounds to reset
@@ -193,6 +261,43 @@ function update(dt) {
   const dist = Math.hypot(dx,dy);
   const maxR = rings.length > 0 ? (rings[rings.length-1].radius+RING_WIDTH+ball.radius+20) : (SHORTER/2);
   if (dist > maxR) resetBall();
+
+  // --- Shrink rings and spawn new outer rings ---
+  rings.forEach(r => {
+    if(!r.visible) return;
+    r.radius -= RING_SHRINK_RATE * dt;
+  });
+
+  // Remove rings that became too small
+  const MIN_VISUAL_RADIUS = SHORTER * 0.01; // Define a small absolute radius for removal
+  while(rings.length && rings[0].visible && rings[0].radius < MIN_VISUAL_RADIUS){
+    rings.shift();
+  }
+
+  // Ensure we keep at least RING_COUNT rings by adding new ones outside
+  while(rings.length < RING_COUNT){
+    const last = rings[rings.length-1];
+    const newRadius = (last ? last.radius + RING_SPACING : BASE_RING_RADIUS);
+    rings.push({
+      radius:newRadius,
+      width:RING_WIDTH,
+      holeSize:HOLE_ARC,
+      angle:rand(0,Math.PI*2),
+      speed:(rings.length%2===0?1:-1)*rand(0.3,0.8),
+      color:`hsla(${rand(0,360)}, 75%, 65%, 0.65)`,
+      visible:true
+    });
+  }
+
+  // -------------- Update Sparkles ---------------
+  for(let i=sparkles.length-1;i>=0;i--){
+    const s = sparkles[i];
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.life -= dt;
+    if(s.life<=0) sparkles.splice(i,1);
+  }
+  // ----------------------------------------------
 }
 
 function draw(ctx) {
@@ -216,6 +321,15 @@ function draw(ctx) {
   ctx.beginPath();
   ctx.arc(ball.x,ball.y,ball.radius,0,Math.PI*2);
   ctx.fill();
+
+  // Draw sparkles
+  sparkles.forEach(s => {
+    const alpha = Math.max(0, s.life / s.maxLife);
+    ctx.fillStyle = `rgba(255,220,150,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(s.x,s.y,ball.radius*0.5,0,Math.PI*2);
+    ctx.fill();
+  });
 }
 
 // Create canvas
