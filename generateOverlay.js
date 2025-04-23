@@ -40,11 +40,11 @@ const FPS = Math.round(meta.fps);
 // Re‑compute animation constants based on size
 const SHORTER = Math.min(WIDTH, HEIGHT);
 const RING_COUNT = 25;
-const BASE_RING_RADIUS = SHORTER * 0.25; // Larger central gap (50% of shorter dimension)
+const BASE_RING_RADIUS = SHORTER * 0.35; // Even larger central gap
 const RING_SPACING = SHORTER * 0.016;
-const RING_WIDTH = SHORTER * 0.008;
+const RING_WIDTH = SHORTER * 0.005; // Thinner rings
 const HOLE_ARC = Math.PI / 3;
-const BALL_RADIUS = SHORTER * 0.01;
+const BALL_RADIUS = SHORTER * 0.008; // Smaller ball
 const BALL_SPEED = SHORTER * 0.5;
 const SUB_STEPS = 2;
 const BOUNCE_RANDOMNESS = 0.2;
@@ -59,6 +59,201 @@ const SPARKLE_SPEED = SHORTER * 0.35;  // initial speed of sparkles
 const SPARKLE_LIFE = 0.7;              // seconds
 const RING_SHRINK_RATE = SHORTER * 0.008; // pixels per second each ring shrinks (reduced to slow down)
 
+// --------- Visual Configuration Options ---------
+// Different color schemes
+const GRADIENT_SCHEMES = [
+  {
+    name: 'rainbow',
+    getRingColor: (i, total) => `hsla(${i * 360 / total}, 75%, 65%, 0.4)`, // More transparent
+    getBallColor: () => '#ff6666'
+  },
+  {
+    name: 'cool',
+    getRingColor: (i, total) => `hsla(${180 + i * 60 / total}, 70%, 60%, 0.4)`, // More transparent
+    getBallColor: () => '#66ffff'
+  },
+  {
+    name: 'warm',
+    getRingColor: (i, total) => `hsla(${i * 60 / total}, 80%, 65%, 0.4)`, // More transparent
+    getBallColor: () => '#ffcc00'
+  },
+  {
+    name: 'neon',
+    getRingColor: (i, total) => {
+      const hues = [320, 260, 180, 120, 40]; // Purple, blue, cyan, green, yellow
+      const hue = hues[i % hues.length];
+      return `hsla(${hue}, 100%, 65%, 0.4)`; // More transparent
+    },
+    getBallColor: () => '#ff00ff'
+  }
+];
+
+// Different ring configurations
+const RING_CONFIGURATIONS = [
+  {
+    name: 'random',
+    setupRings: (rings) => {
+      rings.forEach(r => {
+        r.angle = rand(0, Math.PI*2);
+        r.speed = (Math.random() > 0.5 ? 1 : -1) * rand(0.3, 0.8);
+      });
+    }
+  },
+  {
+    name: 'aligned',
+    setupRings: (rings) => {
+      // All holes aligned initially at same angle
+      const baseAngle = rand(0, Math.PI*2);
+      rings.forEach((r, i) => {
+        r.angle = baseAngle;
+        // Speed inversely proportional to radius
+        const speedFactor = 1 - (i / RING_COUNT) * 0.8; // Outer rings are slower
+        r.speed = (i % 2 === 0 ? 1 : -1) * rand(0.2, 0.5) * speedFactor;
+      });
+    }
+  },
+  {
+    name: 'alternating',
+    setupRings: (rings) => {
+      const baseAngle = rand(0, Math.PI*2);
+      rings.forEach((r, i) => {
+        // Alternate between 0 and PI to create a checkerboard pattern of holes
+        r.angle = baseAngle + (i % 2 === 0 ? 0 : Math.PI);
+        r.speed = (i % 2 === 0 ? 1 : -1) * rand(0.4, 0.7);
+      });
+    }
+  }
+];
+
+// Different ball effects
+const BALL_EFFECTS = [
+  {
+    name: 'solid',
+    initBall: (ball) => {
+      ball.colorStyle = 'solid';
+      ball.color = currentConfig.colorScheme.getBallColor();
+    },
+    updateBallColor: (ball, dt) => {
+      // No change for solid color
+    },
+    drawBall: (ctx, ball) => {
+      // Make the ball slightly transparent
+      ctx.fillStyle = ball.color.startsWith('hsl') 
+        ? ball.color.replace(')', ', 0.7)').replace('hsl', 'hsla')
+        : ball.color.startsWith('rgb') 
+          ? ball.color.replace(')', ', 0.7)').replace('rgb', 'rgba')
+          : ball.color + 'B3'; // Hex with opacity (~0.7)
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
+      ctx.fill();
+    }
+  },
+  {
+    name: 'cycling',
+    initBall: (ball) => {
+      ball.colorStyle = 'cycling';
+      ball.hue = Math.random() * 360;
+      ball.hueSpeed = rand(30, 120); // Degrees per second
+    },
+    updateBallColor: (ball, dt) => {
+      ball.hue = (ball.hue + ball.hueSpeed * dt) % 360;
+      ball.color = `hsl(${ball.hue}, 80%, 60%)`;
+    },
+    drawBall: (ctx, ball) => {
+      ctx.fillStyle = ball.color;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
+      ctx.fill();
+    }
+  },
+  {
+    name: 'glowing',
+    initBall: (ball) => {
+      ball.colorStyle = 'glowing';
+      ball.hue = Math.random() * 360;
+      ball.brightness = 60;
+      ball.brightnessDelta = rand(20, 40);
+      ball.brightnessFactor = 1;
+    },
+    updateBallColor: (ball, dt) => {
+      ball.brightnessFactor = (ball.brightnessFactor > 0) ? 
+                              ball.brightnessFactor - dt * 1.5 : 
+                              ball.brightnessFactor - dt * 1.5;
+      if (ball.brightnessFactor < -1) ball.brightnessFactor = 1;
+      
+      const brightnessValue = ball.brightness + ball.brightnessDelta * Math.abs(ball.brightnessFactor);
+      ball.color = `hsl(${ball.hue}, 90%, ${brightnessValue}%)`;
+    },
+    drawBall: (ctx, ball) => {
+      // Glow effect
+      const gradient = ctx.createRadialGradient(
+        ball.x, ball.y, 0,
+        ball.x, ball.y, ball.radius * 2.5
+      );
+      gradient.addColorStop(0, ball.color);
+      gradient.addColorStop(0.4, `hsla(${ball.hue}, 90%, 60%, 0.2)`); // More subtle glow
+      gradient.addColorStop(1, `hsla(${ball.hue}, 90%, 60%, 0)`);
+      
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius * 2.5, 0, Math.PI*2);
+      ctx.fill();
+      
+      // Main ball
+      ctx.fillStyle = ball.color.replace(')', ', 0.7)').replace('hsl', 'hsla');
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+];
+
+// Different destruction effects
+const DESTRUCTION_EFFECTS = [
+  {
+    name: 'sparkles',
+    createEffect: (x, y, ring) => {
+      spawnSparkles(x, y, ring.color);
+    }
+  },
+  {
+    name: 'explosion',
+    createEffect: (x, y, ring) => {
+      spawnExplosion(x, y, ring.color);
+    }
+  },
+  {
+    name: 'shockwave',
+    createEffect: (x, y, ring) => {
+      spawnShockwave(x, y, ring.color);
+    }
+  },
+  {
+    name: 'combined',
+    createEffect: (x, y, ring) => {
+      spawnSparkles(x, y, ring.color);
+      spawnShockwave(x, y, ring.color);
+      if (Math.random() < 0.3) { // occasionally add explosion too
+        spawnExplosion(x, y, ring.color);
+      }
+    }
+  }
+];
+
+// Randomly choose a configuration
+const currentConfig = {
+  colorScheme: GRADIENT_SCHEMES[Math.floor(Math.random() * GRADIENT_SCHEMES.length)],
+  ringConfig: RING_CONFIGURATIONS[Math.floor(Math.random() * RING_CONFIGURATIONS.length)],
+  ballEffect: BALL_EFFECTS[Math.floor(Math.random() * BALL_EFFECTS.length)],
+  destructionEffect: DESTRUCTION_EFFECTS[Math.floor(Math.random() * DESTRUCTION_EFFECTS.length)]
+};
+
+console.log(`Using configuration:
+  Color scheme: ${currentConfig.colorScheme.name}
+  Ring configuration: ${currentConfig.ringConfig.name}
+  Ball effect: ${currentConfig.ballEffect.name}
+  Destruction effect: ${currentConfig.destructionEffect.name}`);
+
 function rand(min, max) { return Math.random()*(max-min)+min; }
 
 const rings = [];
@@ -70,15 +265,25 @@ function initializeRings() {
       radius: baseRadius, // Use baseRadius directly, no center factor needed
       width: RING_WIDTH,
       holeSize: HOLE_ARC,
-      angle: rand(0, Math.PI*2),
-      speed: (i%2===0?1:-1) * rand(0.3, 0.8),
-      color: `hsla(${i * 360 / RING_COUNT}, 75%, 65%, 0.65)`,
+      angle: 0, // Will be set by configuration
+      speed: 0, // Will be set by configuration
+      color: currentConfig.colorScheme.getRingColor(i, RING_COUNT),
       visible: true
     });
   }
+  
+  // Apply the selected ring configuration
+  currentConfig.ringConfig.setupRings(rings);
 }
 
-const ball = {x: WIDTH/2, y: HEIGHT/2, radius: BALL_RADIUS, vx: rand(-1,1)*BALL_SPEED, vy: rand(-1,1)*BALL_SPEED};
+const ball = {
+  x: WIDTH/2, 
+  y: HEIGHT/2, 
+  radius: BALL_RADIUS, 
+  vx: rand(-1,1)*BALL_SPEED, 
+  vy: rand(-1,1)*BALL_SPEED,
+  color: '#ff6666' // Will be set by configuration
+};
 
 function resetBall() {
   ball.x = WIDTH/2; ball.y=HEIGHT/2;
@@ -86,11 +291,14 @@ function resetBall() {
   ball.vx = Math.cos(angle)*BALL_SPEED;
   ball.vy = Math.sin(angle)*BALL_SPEED;
   rings.forEach(r => r.visible = true);
+  
+  // Initialize ball color according to configuration
+  currentConfig.ballEffect.initBall(ball);
 }
 
 // ---------------- Sparkles -----------------
 const sparkles = [];
-function spawnSparkles(x,y){
+function spawnSparkles(x, y, color = 'rgba(255,220,150,'){
   for(let i=0;i<SPARKLE_COUNT;i++){
     const ang = rand(0,Math.PI*2);
     const spd = rand(0.4,1)*SPARKLE_SPEED;
@@ -99,15 +307,78 @@ function spawnSparkles(x,y){
       vx: Math.cos(ang)*spd,
       vy: Math.sin(ang)*spd,
       life: SPARKLE_LIFE,
-      maxLife: SPARKLE_LIFE
+      maxLife: SPARKLE_LIFE,
+      color: color.replace('a(', '').replace(',0.65)', ''),
+      type: 'sparkle'
     });
   }
+}
+// -------------------------------------------
+
+// ---------------- Explosion -----------------
+const explosions = [];
+function spawnExplosion(x, y, color = 'rgba(255,220,150,'){
+  const baseHue = parseInt(color.match(/hsla\((\d+),/)?.[1] || "30");
+  
+  // Add central flash
+  explosions.push({
+    x, y,
+    radius: BALL_RADIUS * 2,
+    maxRadius: SHORTER * 0.04, // Smaller explosion radius
+    life: 0.5,
+    maxLife: 0.5,
+    color: `hsla(${baseHue}, 100%, 80%, 0.7)`, // More transparent flash
+    type: 'flash'
+  });
+  
+  // Add debris particles
+  const debrisCount = 5 + Math.floor(Math.random() * 5); // Fewer debris particles
+  for (let i = 0; i < debrisCount; i++) {
+    const ang = rand(0, Math.PI * 2);
+    const spd = rand(0.3, 0.7) * SPARKLE_SPEED * 1.5;
+    const size = rand(BALL_RADIUS * 0.5, BALL_RADIUS * 1.2);
+    const life = rand(0.3, 0.8);
+    
+    explosions.push({
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      radius: size,
+      life,
+      maxLife: life,
+      rotation: rand(0, Math.PI * 2),
+      rotationSpeed: rand(-Math.PI, Math.PI) * 2,
+      color: `hsla(${baseHue + rand(-20, 20)}, 90%, 65%, 1)`,
+      type: 'debris'
+    });
+  }
+}
+// -------------------------------------------
+
+// ---------------- Shockwave -----------------
+const shockwaves = [];
+function spawnShockwave(x, y, color = 'rgba(255,220,150,'){
+  const baseHue = parseInt(color.match(/hsla\((\d+),/)?.[1] || "30");
+  const life = 0.6;
+  
+  shockwaves.push({
+    x, y,
+    radius: BALL_RADIUS * 2,
+    maxRadius: SHORTER * 0.1, // Smaller shockwave
+    life,
+    maxLife: life,
+    color: `hsla(${baseHue}, 80%, 70%, 0.6)`, // More transparent shockwave
+    type: 'shockwave'
+  });
 }
 // -------------------------------------------
 
 function update(dt) {
   // Update ring rotations
   rings.forEach(r=> r.angle += r.speed*dt);
+  
+  // Update ball color
+  currentConfig.ballEffect.updateBallColor(ball, dt);
   
   // Divide the time step into smaller substeps for more accurate collision detection
   const subDt = dt / SUB_STEPS;
@@ -239,9 +510,9 @@ function update(dt) {
           // Only check one collision per substep
           break;
         } else if (enteredCollisionZone) {
-          // Ball is passing through the hole *and* has just entered the collision zone
+          // Ball is passing through the hole
           ring.visible = false;
-          spawnSparkles(ball.x,ball.y); // visual effect for destruction
+          currentConfig.destructionEffect.createEffect(ball.x, ball.y, ring); // dynamic destruction effect
           passedThroughHoleInSubstep = true; // Mark that a pass-through happened
           passedThroughHoleInFrame = true; // Mark for the whole frame
           break;
@@ -297,7 +568,41 @@ function update(dt) {
     s.life -= dt;
     if(s.life<=0) sparkles.splice(i,1);
   }
-  // ----------------------------------------------
+  
+  // -------------- Update Explosions ---------------
+  for (let i = explosions.length-1; i >= 0; i--) {
+    const e = explosions[i];
+    e.life -= dt;
+    
+    if (e.type === 'flash') {
+      // Expand the flash
+      e.radius = e.maxRadius * (1 - e.life/e.maxLife);
+    } else if (e.type === 'debris') {
+      // Move debris
+      e.x += e.vx * dt;
+      e.y += e.vy * dt;
+      
+      // Add gravity
+      e.vy += SHORTER * 0.2 * dt;
+      
+      // Rotate debris
+      e.rotation += e.rotationSpeed * dt;
+    }
+    
+    if (e.life <= 0) explosions.splice(i, 1);
+  }
+  
+  // -------------- Update Shockwaves ---------------
+  for (let i = shockwaves.length-1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.life -= dt;
+    
+    // Expand the shockwave
+    s.radius = s.maxRadius * (1 - s.life/s.maxLife);
+    
+    if (s.life <= 0) shockwaves.splice(i, 1);
+  }
+  // -----------------------------------------------
 }
 
 function draw(ctx) {
@@ -317,18 +622,72 @@ function draw(ctx) {
     ctx.restore();
   });
 
-  ctx.fillStyle='#ff6666';
-  ctx.beginPath();
-  ctx.arc(ball.x,ball.y,ball.radius,0,Math.PI*2);
-  ctx.fill();
+  // Draw ball using the selected effect
+  currentConfig.ballEffect.drawBall(ctx, ball);
 
   // Draw sparkles
   sparkles.forEach(s => {
     const alpha = Math.max(0, s.life / s.maxLife);
-    ctx.fillStyle = `rgba(255,220,150,${alpha})`;
+    ctx.fillStyle = `rgba(${s.color},${alpha})`;
     ctx.beginPath();
     ctx.arc(s.x,s.y,ball.radius*0.5,0,Math.PI*2);
     ctx.fill();
+  });
+  
+  // Draw explosions
+  explosions.forEach(e => {
+    const alpha = Math.max(0, e.life / e.maxLife);
+    
+    if (e.type === 'flash') {
+      // Draw expanding flash
+      const gradient = ctx.createRadialGradient(
+        e.x, e.y, 0,
+        e.x, e.y, e.radius
+      );
+      gradient.addColorStop(0, e.color.replace('1)', `${alpha})`));
+      gradient.addColorStop(0.7, e.color.replace('1)', `${alpha * 0.7})`));
+      gradient.addColorStop(1, e.color.replace('1)', '0)'));
+      
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius, 0, Math.PI*2);
+      ctx.fill();
+    } else if (e.type === 'debris') {
+      // Draw debris particles
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(e.rotation);
+      
+      ctx.fillStyle = e.color.replace('1)', `${alpha})`);
+      ctx.beginPath();
+      
+      // Randomize debris shape - sometimes square, sometimes triangle
+      if (e.shapeType === undefined) {
+        e.shapeType = Math.random() > 0.5 ? 'square' : 'triangle';
+      }
+      
+      if (e.shapeType === 'square') {
+        ctx.rect(-e.radius/2, -e.radius/2, e.radius, e.radius);
+      } else {
+        ctx.moveTo(0, -e.radius/2);
+        ctx.lineTo(-e.radius/2, e.radius/2);
+        ctx.lineTo(e.radius/2, e.radius/2);
+        ctx.closePath();
+      }
+      
+      ctx.fill();
+      ctx.restore();
+    }
+  });
+  
+  // Draw shockwaves
+  shockwaves.forEach(s => {
+    const alpha = Math.max(0, s.life / s.maxLife) * 0.4; // Reduced alpha
+    ctx.strokeStyle = s.color.replace('1)', `${alpha})`);
+    ctx.lineWidth = RING_WIDTH * 1.2 * (s.life / s.maxLife); // Even thinner
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.radius, 0, Math.PI*2);
+    ctx.stroke();
   });
 }
 
@@ -342,7 +701,7 @@ const ffmpeg = spawn('ffmpeg', [
   '-y',
   '-i', inputPath,
   '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${WIDTH}x${HEIGHT}`, '-r', `${FPS}`, '-i', '-',
-  '-filter_complex', `[0:v]scale=${WIDTH}:${HEIGHT},format=rgba[bg]; [1:v]format=rgba,colorchannelmixer=aa=0.8[ov]; [bg][ov]overlay=format=auto`,
+  '-filter_complex', `[0:v]scale=${WIDTH}:${HEIGHT},format=rgba[bg]; [1:v]format=rgba,colorchannelmixer=aa=0.6[ov]; [bg][ov]overlay=format=auto`,
   '-pix_fmt', 'yuv420p',
   '-c:v', 'libx264', '-profile:v', 'high', '-crf', '18', '-preset', 'veryfast',
   '-movflags', '+faststart',
