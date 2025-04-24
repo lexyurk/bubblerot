@@ -64,17 +64,17 @@ const RING_SHRINK_RATE = SHORTER * 0.008; // pixels per second each ring shrinks
 const GRADIENT_SCHEMES = [
   {
     name: 'rainbow',
-    getRingColor: (i, total) => `hsla(${i * 360 / total}, 75%, 65%, 0.4)`, // More transparent
+    getRingColor: (i, total) => `hsla(${i * 360 / total}, 75%, 65%, 0.5)`, // More transparent
     getBallColor: () => '#ff6666'
   },
   {
     name: 'cool',
-    getRingColor: (i, total) => `hsla(${180 + i * 60 / total}, 70%, 60%, 0.4)`, // More transparent
+    getRingColor: (i, total) => `hsla(${180 + i * 60 / total}, 70%, 60%, 0.5)`, // More transparent
     getBallColor: () => '#66ffff'
   },
   {
     name: 'warm',
-    getRingColor: (i, total) => `hsla(${i * 60 / total}, 80%, 65%, 0.4)`, // More transparent
+    getRingColor: (i, total) => `hsla(${i * 60 / total}, 80%, 65%, 0.5)`, // More transparent
     getBallColor: () => '#ffcc00'
   },
   {
@@ -82,7 +82,7 @@ const GRADIENT_SCHEMES = [
     getRingColor: (i, total) => {
       const hues = [320, 260, 180, 120, 40]; // Purple, blue, cyan, green, yellow
       const hue = hues[i % hues.length];
-      return `hsla(${hue}, 100%, 65%, 0.4)`; // More transparent
+      return `hsla(${hue}, 100%, 65%, 0.5)`; // More transparent
     },
     getBallColor: () => '#ff00ff'
   }
