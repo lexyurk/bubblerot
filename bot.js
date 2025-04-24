@@ -54,70 +54,67 @@ async function processVideo(ctx, fileId, messageType, deleteOriginal = false) {
         return;
       }
       
-      // Process the video with our overlay generator
-      const processor = spawn('node', ['generateOverlay.js', inputFilePath, outputFilePath]);
-      
-      processor.stderr.on('data', (data) => {
-        console.log(`Processing log: ${data}`);
-      });
-      
-      processor.on('close', async (code) => {
-        try {
-          if (code !== 0) {
+      // Process the video with retries
+      await processVideoWithRetries(
+        inputFilePath,
+        outputFilePath,
+        async (success) => {
+          try {
+            if (!success) {
+              if (processingMessage) {
+                await ctx.telegram.editMessageText(
+                  ctx.chat.id, 
+                  processingMessage.message_id, 
+                  null, 
+                  'Error processing your video.'
+                );
+              }
+              return;
+            }
+            
+            // Update processing message if we're not deleting the original
             if (processingMessage) {
               await ctx.telegram.editMessageText(
                 ctx.chat.id, 
                 processingMessage.message_id, 
                 null, 
-                'Error processing your video.'
+                'Here\'s your processed video!'
               );
             }
-            return;
-          }
-          
-          // Update processing message if we're not deleting the original
-          if (processingMessage) {
-            await ctx.telegram.editMessageText(
-              ctx.chat.id, 
-              processingMessage.message_id, 
-              null, 
-              'Here\'s your processed video!'
-            );
-          }
-          
-          // Delete the original message if requested
-          if (deleteOriginal && originalMessageId) {
+            
+            // Delete the original message if requested
+            if (deleteOriginal && originalMessageId) {
+              try {
+                await ctx.telegram.deleteMessage(ctx.chat.id, originalMessageId);
+              } catch (deleteError) {
+                console.error('Error deleting original message:', deleteError);
+                // Continue with the rest of the processing regardless
+              }
+            }
+            
+            // Send as video note if original was a video note, otherwise as regular video
+            if (messageType === 'video_note') {
+              await ctx.replyWithVideoNote({ source: outputFilePath });
+            } else {
+              await ctx.replyWithVideo({ source: outputFilePath });
+            }
+            
+            // Clean up temporary files immediately after sending
             try {
-              await ctx.telegram.deleteMessage(ctx.chat.id, originalMessageId);
-            } catch (deleteError) {
-              console.error('Error deleting original message:', deleteError);
-              // Continue with the rest of the processing regardless
+              fs.unlinkSync(inputFilePath);
+              fs.unlinkSync(outputFilePath);
+              console.log(`Cleaned up temporary files for user ${userId}`);
+            } catch (err) {
+              console.error('Error cleaning up files:', err);
+            }
+          } catch (error) {
+            console.error('Error sending processed video:', error);
+            if (!deleteOriginal) {
+              await ctx.reply('Sorry, there was an error sending your processed video.');
             }
           }
-          
-          // Send as video note if original was a video note, otherwise as regular video
-          if (messageType === 'video_note') {
-            await ctx.replyWithVideoNote({ source: outputFilePath });
-          } else {
-            await ctx.replyWithVideo({ source: outputFilePath });
-          }
-          
-          // Clean up temporary files immediately after sending
-          try {
-            fs.unlinkSync(inputFilePath);
-            fs.unlinkSync(outputFilePath);
-            console.log(`Cleaned up temporary files for user ${userId}`);
-          } catch (err) {
-            console.error('Error cleaning up files:', err);
-          }
-          
-        } catch (error) {
-          console.error('Error sending processed video:', error);
-          if (!deleteOriginal) {
-            await ctx.reply('Sorry, there was an error sending your processed video.');
-          }
         }
-      });
+      );
     });
     
     download.on('error', async (err) => {
@@ -133,6 +130,42 @@ async function processVideo(ctx, fileId, messageType, deleteOriginal = false) {
       await ctx.reply('Sorry, something went wrong while processing your video.');
     }
   }
+}
+
+// Helper function to process video with retries
+async function processVideoWithRetries(inputFilePath, outputFilePath, callback, retryCount = 0) {
+  const MAX_RETRIES = 2;
+  
+  return new Promise((resolve) => {
+    // Process the video with our overlay generator
+    const processor = spawn('node', ['generateOverlay.js', inputFilePath, outputFilePath]);
+    
+    processor.stderr.on('data', (data) => {
+      console.log(`Processing log (attempt ${retryCount + 1}): ${data}`);
+    });
+    
+    processor.on('close', async (code) => {
+      if (code !== 0) {
+        console.log(`Processing failed on attempt ${retryCount + 1}`);
+        
+        if (retryCount < MAX_RETRIES) {
+          console.log(`Retrying... Attempt ${retryCount + 2}`);
+          // Retry processing without notifying the user
+          return resolve(processVideoWithRetries(inputFilePath, outputFilePath, callback, retryCount + 1));
+        } else {
+          console.log(`All ${MAX_RETRIES + 1} attempts failed, giving up`);
+          // All retries failed
+          await callback(false);
+          return resolve();
+        }
+      }
+      
+      // Processing succeeded
+      console.log('Processing succeeded');
+      await callback(true);
+      resolve();
+    });
+  });
 }
 
 // Handler for regular video messages
