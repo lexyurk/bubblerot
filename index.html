@@ -106,7 +106,7 @@
           angle: Math.random() * Math.PI * 2,
           // Alternate direction: even rings clockwise, odd counter‑clockwise
           speed: (i % 2 === 0 ? 1 : -1) * (0.3 + i * 0.1),
-          color: 'rgba(255, 255, 255, 0.4)',
+          color: 'rgba(255, 255, 255, 0.7)',
         });
       }
     }
@@ -202,7 +202,7 @@
       }
 
       // Draw the ball
-      ctx.fillStyle = '#ff5050';
+      ctx.fillStyle = '#ff4444'; // More vibrant red
       ctx.beginPath();
       ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
       ctx.fill();

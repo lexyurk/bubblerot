@@ -39,14 +39,14 @@ const FPS = Math.round(meta.fps);
 
 // Re‑compute animation constants based on size
 const SHORTER = Math.min(WIDTH, HEIGHT);
-const RING_COUNT = 25;
+const RING_COUNT = 12; // Reduced from 25 for better performance
 const BASE_RING_RADIUS = SHORTER * 0.35; // Even larger central gap
 const RING_SPACING = SHORTER * 0.016;
 const RING_WIDTH = SHORTER * 0.005; // Thinner rings
 const HOLE_ARC = Math.PI / 3;
 const BALL_RADIUS = SHORTER * 0.008; // Smaller ball
 const BALL_SPEED = SHORTER * 0.5;
-const SUB_STEPS = 2;
+const SUB_STEPS = 1; // Reduced from 2 for better performance
 const BOUNCE_RANDOMNESS = 0.2;
 // --- Bounce energy parameters ---
 const MIN_ENERGY_FACTOR = 0.85;        // Minimum energy factor (slowdown)
@@ -54,7 +54,7 @@ const MAX_ENERGY_FACTOR = 1.15;        // Maximum energy factor (speedup)
 const ENERGY_CHANCE_BOOST = 0.6;       // Chance of getting a speed boost
 const MIN_BALL_SPEED = SHORTER * 0.2;  // Minimum allowed ball speed
 const MAX_BALL_SPEED = SHORTER * 0.8;  // Maximum allowed ball speed
-const SPARKLE_COUNT = 18;              // number of particles when a ring is destroyed
+const SPARKLE_COUNT = 8;               // Reduced from 18 for better performance
 const SPARKLE_SPEED = SHORTER * 0.35;  // initial speed of sparkles
 const SPARKLE_LIFE = 0.7;              // seconds
 const RING_SHRINK_RATE = SHORTER * 0.008; // pixels per second each ring shrinks (reduced to slow down)
@@ -64,17 +64,17 @@ const RING_SHRINK_RATE = SHORTER * 0.008; // pixels per second each ring shrinks
 const GRADIENT_SCHEMES = [
   {
     name: 'rainbow',
-    getRingColor: (i, total) => `hsla(${i * 360 / total}, 75%, 65%, 0.5)`, // More transparent
+    getRingColor: (i, total) => `hsla(${i * 360 / total}, 75%, 65%, 0.8)`, // Less transparent
     getBallColor: () => '#ff6666'
   },
   {
     name: 'cool',
-    getRingColor: (i, total) => `hsla(${180 + i * 60 / total}, 70%, 60%, 0.5)`, // More transparent
+    getRingColor: (i, total) => `hsla(${180 + i * 60 / total}, 70%, 60%, 0.8)`, // Less transparent
     getBallColor: () => '#66ffff'
   },
   {
     name: 'warm',
-    getRingColor: (i, total) => `hsla(${i * 60 / total}, 80%, 65%, 0.5)`, // More transparent
+    getRingColor: (i, total) => `hsla(${i * 60 / total}, 80%, 65%, 0.8)`, // Less transparent
     getBallColor: () => '#ffcc00'
   },
   {
@@ -82,7 +82,7 @@ const GRADIENT_SCHEMES = [
     getRingColor: (i, total) => {
       const hues = [320, 260, 180, 120, 40]; // Purple, blue, cyan, green, yellow
       const hue = hues[i % hues.length];
-      return `hsla(${hue}, 100%, 65%, 0.5)`; // More transparent
+      return `hsla(${hue}, 100%, 65%, 0.8)`; // Less transparent
     },
     getBallColor: () => '#ff00ff'
   }
@@ -137,12 +137,8 @@ const BALL_EFFECTS = [
       // No change for solid color
     },
     drawBall: (ctx, ball) => {
-      // Make the ball slightly transparent
-      ctx.fillStyle = ball.color.startsWith('hsl') 
-        ? ball.color.replace(')', ', 0.7)').replace('hsl', 'hsla')
-        : ball.color.startsWith('rgb') 
-          ? ball.color.replace(')', ', 0.7)').replace('rgb', 'rgba')
-          : ball.color + 'B3'; // Hex with opacity (~0.7)
+      // Make the ball solid and opaque
+      ctx.fillStyle = ball.color;
       ctx.beginPath();
       ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
       ctx.fill();
@@ -185,22 +181,22 @@ const BALL_EFFECTS = [
       ball.color = `hsl(${ball.hue}, 90%, ${brightnessValue}%)`;
     },
     drawBall: (ctx, ball) => {
-      // Glow effect
+      // Simplified glow effect for better performance
       const gradient = ctx.createRadialGradient(
         ball.x, ball.y, 0,
-        ball.x, ball.y, ball.radius * 2.5
+        ball.x, ball.y, ball.radius * 2
       );
       gradient.addColorStop(0, ball.color);
-      gradient.addColorStop(0.4, `hsla(${ball.hue}, 90%, 60%, 0.2)`); // More subtle glow
+      gradient.addColorStop(0.6, `hsla(${ball.hue}, 90%, 60%, 0.4)`);
       gradient.addColorStop(1, `hsla(${ball.hue}, 90%, 60%, 0)`);
       
       ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.arc(ball.x, ball.y, ball.radius * 2.5, 0, Math.PI*2);
+      ctx.arc(ball.x, ball.y, ball.radius * 2, 0, Math.PI*2);
       ctx.fill();
       
-      // Main ball
-      ctx.fillStyle = ball.color.replace(')', ', 0.7)').replace('hsl', 'hsla');
+      // Main ball - solid and opaque
+      ctx.fillStyle = ball.color;
       ctx.beginPath();
       ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
       ctx.fill();
@@ -327,12 +323,12 @@ function spawnExplosion(x, y, color = 'rgba(255,220,150,'){
     maxRadius: SHORTER * 0.04, // Smaller explosion radius
     life: 0.5,
     maxLife: 0.5,
-    color: `hsla(${baseHue}, 100%, 80%, 0.7)`, // More transparent flash
+    color: `hsla(${baseHue}, 100%, 80%, 0.8)`, // Less transparent flash
     type: 'flash'
   });
   
-  // Add debris particles
-  const debrisCount = 5 + Math.floor(Math.random() * 5); // Fewer debris particles
+  // Add debris particles - reduced count for better performance
+  const debrisCount = 3 + Math.floor(Math.random() * 3); // Reduced from 5-10 to 3-6
   for (let i = 0; i < debrisCount; i++) {
     const ang = rand(0, Math.PI * 2);
     const spd = rand(0.3, 0.7) * SPARKLE_SPEED * 1.5;
@@ -367,7 +363,7 @@ function spawnShockwave(x, y, color = 'rgba(255,220,150,'){
     maxRadius: SHORTER * 0.1, // Smaller shockwave
     life,
     maxLife: life,
-    color: `hsla(${baseHue}, 80%, 70%, 0.6)`, // More transparent shockwave
+    color: `hsla(${baseHue}, 80%, 70%, 0.8)`, // Less transparent shockwave
     type: 'shockwave'
   });
 }
@@ -555,7 +551,7 @@ function update(dt) {
       holeSize:HOLE_ARC,
       angle:rand(0,Math.PI*2),
       speed:(rings.length%2===0?1:-1)*rand(0.3,0.8),
-      color:`hsla(${rand(0,360)}, 75%, 65%, 0.65)`,
+      color:`hsla(${rand(0,360)}, 75%, 65%, 0.8)`, // Less transparent
       visible:true
     });
   }
@@ -682,7 +678,7 @@ function draw(ctx) {
   
   // Draw shockwaves
   shockwaves.forEach(s => {
-    const alpha = Math.max(0, s.life / s.maxLife) * 0.4; // Reduced alpha
+    const alpha = Math.max(0, s.life / s.maxLife) * 0.6; // Less alpha reduction
     ctx.strokeStyle = s.color.replace('1)', `${alpha})`);
     ctx.lineWidth = RING_WIDTH * 1.2 * (s.life / s.maxLife); // Even thinner
     ctx.beginPath();
