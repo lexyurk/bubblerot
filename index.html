@@ -143,37 +143,82 @@
 
       // Check collision with each ring
       for (const ring of rings) {
-        const innerBound = ring.radius - ring.width / 2 - ball.radius;
-        const outerBound = ring.radius + ring.width / 2 + ball.radius;
-        if (dist >= innerBound && dist <= outerBound) {
+        const ringInnerRadius = ring.radius - ring.width / 2;
+        const ringOuterRadius = ring.radius + ring.width / 2;
+        
+        // Check if ball is colliding with the ring
+        const ballDistanceFromRing = Math.abs(dist - ring.radius);
+        const isCollidingWithRing = ballDistanceFromRing <= (ring.width / 2 + ball.radius);
+        
+        if (isCollidingWithRing) {
           // Compute ball's angle relative to the ring's rotation
-          let angleRelative = Math.atan2(dy, dx) - ring.angle;
-          // Normalize to 0..2π
-          angleRelative = (angleRelative + Math.PI * 2) % (Math.PI * 2);
-
-          // If ball is NOT within the hole arc, bounce
-          if (angleRelative > ring.holeSize / 2 && angleRelative < Math.PI * 2 - ring.holeSize / 2) {
-            const nx = dx / dist; // Normal vector components
-            const ny = dy / dist;
-            const dot = ball.vx * nx + ball.vy * ny;
-            ball.vx -= 2 * dot * nx;
-            ball.vy -= 2 * dot * ny;
-
-            // Move the ball slightly after bounce to avoid jittering inside the ring
-            ball.x += ball.vx * dt;
-            ball.y += ball.vy * dt;
-
-            // Recompute values after bounce
+          let ballAngle = Math.atan2(dy, dx);
+          let relativeAngle = ballAngle - ring.angle;
+          
+          // Normalize angle to [0, 2π]
+          while (relativeAngle < 0) relativeAngle += Math.PI * 2;
+          while (relativeAngle >= Math.PI * 2) relativeAngle -= Math.PI * 2;
+          
+          // Calculate angular size of ball at this distance
+          const angularBallSize = Math.asin(Math.min(0.99, ball.radius / (dist + 0.001)));
+          
+          // Check if ball is in the hole (considering ball size)
+          const holeStart = -ring.holeSize / 2 - angularBallSize;
+          const holeEnd = ring.holeSize / 2 + angularBallSize;
+          
+          const isInHole = (relativeAngle >= holeStart && relativeAngle <= holeEnd) || 
+                           (relativeAngle >= (Math.PI * 2 + holeStart) && relativeAngle <= (Math.PI * 2 + holeEnd));
+          
+          if (!isInHole) {
+            // Ball bounces off the ring
+            
+            // Determine if hitting inner or outer edge
+            const hitInner = dist < ring.radius;
+            
+            // Calculate correct normal vector
+            let nx, ny;
+            if (hitInner) {
+              // Ball hits inner edge - normal points inward (toward center)
+              nx = -dx / dist;
+              ny = -dy / dist;
+            } else {
+              // Ball hits outer edge - normal points outward (away from center)
+              nx = dx / dist;
+              ny = dy / dist;
+            }
+            
+            // Calculate reflection using standard formula: v' = v - 2(v·n)n
+            const dotProduct = ball.vx * nx + ball.vy * ny;
+            ball.vx = ball.vx - 2 * dotProduct * nx;
+            ball.vy = ball.vy - 2 * dotProduct * ny;
+            
+            // Push ball out of collision zone to prevent sticking
+            const penetration = (ring.width / 2 + ball.radius) - ballDistanceFromRing;
+            if (penetration > 0) {
+              if (hitInner) {
+                // Push ball toward center
+                ball.x -= nx * penetration;
+                ball.y -= ny * penetration;
+              } else {
+                // Push ball away from center
+                ball.x += nx * penetration;
+                ball.y += ny * penetration;
+              }
+            }
+            
+            // Update position for next collision check
             dx = ball.x - cx;
             dy = ball.y - cy;
             dist = Math.hypot(dx, dy);
+            
+            break; // Only handle one collision per frame
           }
         }
       }
 
       // If the ball escaped beyond the outermost ring + margin, respawn
       const outermost = rings[rings.length - 1];
-      const maxRadius = outermost.radius + outermost.width + 20;
+      const maxRadius = outermost.radius + outermost.width + 50;
       if (dist > maxRadius) {
         resetBall();
       }
