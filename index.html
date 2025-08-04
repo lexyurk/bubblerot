@@ -62,6 +62,10 @@
     const BALL_RADIUS = 6;          // Radius of the bouncing ball
     const BALL_SPEED = 120;         // Ball speed in px/s
 
+    // --- New Physics constants ---
+    const COEFFICIENT_OF_RESTITUTION = 0.85; // How much energy is kept after a bounce (0-1)
+    const FRICTION_FACTOR = 0.4;          // How much of the ring's spin is transferred to the ball
+
     /**
      * Ring data structure
      * {
@@ -169,6 +173,14 @@
           const isInHole = (relativeAngle >= holeStart && relativeAngle <= holeEnd) || 
                            (relativeAngle >= (Math.PI * 2 + holeStart) && relativeAngle <= (Math.PI * 2 + holeEnd));
           
+          } else {
+            // Ball passed through the hole, "destroying" the ring.
+            // For this temporary version, we'll just make it invisible.
+            // A more advanced version in generateOverlay might have a particle effect.
+            ring.visible = false;
+            break; // Only handle one collision per frame
+          }
+
           if (!isInHole) {
             // Ball bounces off the ring
             
@@ -187,10 +199,37 @@
               ny = dy / dist;
             }
             
-            // Calculate reflection using standard formula: v' = v - 2(v·n)n
-            const dotProduct = ball.vx * nx + ball.vy * ny;
-            ball.vx = ball.vx - 2 * dotProduct * nx;
-            ball.vy = ball.vy - 2 * dotProduct * ny;
+            // --- NEW PHYSICS MODEL ---
+
+            // 1. Decompose velocity into normal and tangential components
+            const v_dot_n = ball.vx * nx + ball.vy * ny;
+            const v_normal_x = v_dot_n * nx;
+            const v_normal_y = v_dot_n * ny;
+            const v_tangent_x = ball.vx - v_normal_x;
+            const v_tangent_y = ball.vy - v_normal_y;
+
+            // 2. Apply restitution to the normal component (the "bounce")
+            // This reverses the normal velocity and reduces it, simulating energy loss.
+            const v_normal_x_new = -v_normal_x * COEFFICIENT_OF_RESTITUTION;
+            const v_normal_y_new = -v_normal_y * COEFFICIENT_OF_RESTITUTION;
+
+            // 3. Calculate ring's surface velocity and apply friction to tangential component
+            const tangent_x = -ny;
+            const tangent_y = nx;
+            // ring.speed is in rad/s. ring.radius is in px. Result is px/s.
+            const ring_surface_speed = ring.speed * ring.radius;
+            const ring_surface_vx = tangent_x * ring_surface_speed;
+            const ring_surface_vy = tangent_y * ring_surface_speed;
+
+            // The final tangential velocity is a mix of the ball's original tangent
+            // and the ring's surface velocity, based on the friction factor.
+            // This makes the ring "push" the ball along its direction of spin.
+            const v_tangent_x_new = v_tangent_x * (1 - FRICTION_FACTOR) + ring_surface_vx * FRICTION_FACTOR;
+            const v_tangent_y_new = v_tangent_y * (1 - FRICTION_FACTOR) + ring_surface_vy * FRICTION_FACTOR;
+
+            // 4. Recombine components for the new velocity
+            ball.vx = v_normal_x_new + v_tangent_x_new;
+            ball.vy = v_normal_y_new + v_tangent_y_new;
             
             // Push ball out of collision zone to prevent sticking
             const penetration = (ring.width / 2 + ball.radius) - ballDistanceFromRing;
@@ -216,10 +255,47 @@
         }
       }
 
-      // If the ball escaped beyond the outermost ring + margin, respawn
+      // --- Boundary Bounce ---
+      // If the ball goes beyond the visible area, bounce it back.
       const outermost = rings[rings.length - 1];
-      const maxRadius = outermost.radius + outermost.width + 50;
-      if (dist > maxRadius) {
+      // Define a boundary slightly larger than the last ring.
+      const boundaryRadius = outermost.radius + outermost.width / 2;
+
+      if (dist + ball.radius > boundaryRadius) {
+        // Ball has hit the outer wall.
+
+        // Push ball back into bounds to prevent sticking.
+        const penetration = (dist + ball.radius) - boundaryRadius;
+        ball.x -= (dx / dist) * penetration;
+        ball.y -= (dy / dist) * penetration;
+
+        // The normal of the collision is just the vector from the center to the ball.
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        // Decompose velocity into normal and tangential components.
+        const v_dot_n = ball.vx * nx + ball.vy * ny;
+        const v_normal_x = v_dot_n * nx;
+        const v_normal_y = v_dot_n * ny;
+        const v_tangent_x = ball.vx - v_normal_x;
+        const v_tangent_y = ball.vy - v_normal_y;
+
+        // Reverse the normal component to create the bounce.
+        // We use the same restitution coefficient for a consistent feel.
+        const v_normal_x_new = -v_normal_x * COEFFICIENT_OF_RESTITUTION;
+        const v_normal_y_new = -v_normal_y * COEFFICIENT_OF_RESTITUTION;
+
+        // Recombine to get the new velocity.
+        ball.vx = v_normal_x_new + v_tangent_x;
+        ball.vy = v_normal_y_new + v_tangent_y;
+      }
+
+      // --- Win Condition Check ---
+      // Check if all rings have been destroyed.
+      const allRingsDestroyed = rings.every(ring => !ring.visible);
+      if (allRingsDestroyed) {
+        // If all rings are gone, reset the simulation.
+        initRings();
         resetBall();
       }
     }

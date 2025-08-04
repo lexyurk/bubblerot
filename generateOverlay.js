@@ -47,13 +47,11 @@ const HOLE_ARC = Math.PI / 3;
 const BALL_RADIUS = SHORTER * 0.008; // Smaller ball
 const BALL_SPEED = SHORTER * 0.5;
 const SUB_STEPS = 1; // Reduced from 2 for better performance
-const BOUNCE_RANDOMNESS = 0.2;
-// --- Bounce energy parameters ---
-const MIN_ENERGY_FACTOR = 0.85;        // Minimum energy factor (slowdown)
-const MAX_ENERGY_FACTOR = 1.15;        // Maximum energy factor (speedup)
-const ENERGY_CHANCE_BOOST = 0.6;       // Chance of getting a speed boost
-const MIN_BALL_SPEED = SHORTER * 0.2;  // Minimum allowed ball speed
-const MAX_BALL_SPEED = SHORTER * 0.8;  // Maximum allowed ball speed
+
+// --- New Physics constants ---
+const COEFFICIENT_OF_RESTITUTION = 0.85; // How much energy is kept after a bounce (0-1)
+const FRICTION_FACTOR = 0.4;          // How much of the ring's spin is transferred to the ball
+
 const SPARKLE_COUNT = 8;               // Reduced from 18 for better performance
 const SPARKLE_SPEED = SHORTER * 0.35;  // initial speed of sparkles
 const SPARKLE_LIFE = 0.7;              // seconds
@@ -438,30 +436,34 @@ function update(dt) {
           ny = dy / dist;
         }
         
-        // Calculate reflection using standard formula: v' = v - 2(v·n)n
-        const dotProduct = ball.vx * nx + ball.vy * ny;
-        ball.vx = ball.vx - 2 * dotProduct * nx;
-        ball.vy = ball.vy - 2 * dotProduct * ny;
-        
-        // Add slight randomness to bounce direction (much less than before)
-        const currentSpeed = Math.hypot(ball.vx, ball.vy);
-        const currentAngle = Math.atan2(ball.vy, ball.vx);
-        const randomOffset = (Math.random() - 0.5) * BOUNCE_RANDOMNESS * 0.5; // Reduced randomness
-        
-        ball.vx = Math.cos(currentAngle + randomOffset) * currentSpeed;
-        ball.vy = Math.sin(currentAngle + randomOffset) * currentSpeed;
-        
-        // Ensure ball speed stays within reasonable bounds
-        const newSpeed = Math.hypot(ball.vx, ball.vy);
-        if (newSpeed < MIN_BALL_SPEED) {
-          const scale = MIN_BALL_SPEED / newSpeed;
-          ball.vx *= scale;
-          ball.vy *= scale;
-        } else if (newSpeed > MAX_BALL_SPEED) {
-          const scale = MAX_BALL_SPEED / newSpeed;
-          ball.vx *= scale;
-          ball.vy *= scale;
-        }
+        // --- NEW PHYSICS MODEL ---
+
+        // 1. Decompose velocity into normal and tangential components
+        const v_dot_n = ball.vx * nx + ball.vy * ny;
+        const v_normal_x = v_dot_n * nx;
+        const v_normal_y = v_dot_n * ny;
+        const v_tangent_x = ball.vx - v_normal_x;
+        const v_tangent_y = ball.vy - v_normal_y;
+
+        // 2. Apply restitution to the normal component (the "bounce")
+        const v_normal_x_new = -v_normal_x * COEFFICIENT_OF_RESTITUTION;
+        const v_normal_y_new = -v_normal_y * COEFFICIENT_OF_RESTITUTION;
+
+        // 3. Calculate ring's surface velocity and apply friction to tangential component
+        const tangent_x = -ny;
+        const tangent_y = nx;
+        const ring_surface_speed = ring.speed * ring.radius;
+        const ring_surface_vx = tangent_x * ring_surface_speed;
+        const ring_surface_vy = tangent_y * ring_surface_speed;
+
+        // The final tangential velocity is a mix of the ball's original tangent
+        // and the ring's surface velocity, based on the friction factor.
+        const v_tangent_x_new = v_tangent_x * (1 - FRICTION_FACTOR) + ring_surface_vx * FRICTION_FACTOR;
+        const v_tangent_y_new = v_tangent_y * (1 - FRICTION_FACTOR) + ring_surface_vy * FRICTION_FACTOR;
+
+        // 4. Recombine components for the new velocity
+        ball.vx = v_normal_x_new + v_tangent_x_new;
+        ball.vy = v_normal_y_new + v_tangent_y_new;
         
         // Push ball out of collision zone to prevent sticking
         const penetration = (ring.width / 2 + ball.radius) - ballDistanceFromRing;
@@ -487,13 +489,33 @@ function update(dt) {
     }
   }
   
-  // Check if ball is outside bounds to reset
-  const maxRadius = rings.length > 0 ? 
-    (rings[rings.length-1].radius + RING_WIDTH + ball.radius + 50) : 
-    (SHORTER / 2);
-  
-  if (dist > maxRadius) {
-    resetBall();
+  // --- Boundary Bounce ---
+  // If the ball goes beyond the visible area, bounce it back.
+  if (rings.length > 0) {
+    const outermost = rings[rings.length - 1];
+    const boundaryRadius = outermost.radius + outermost.width / 2;
+
+    if (dist + ball.radius > boundaryRadius) {
+      // Ball has hit the outer wall.
+      const penetration = (dist + ball.radius) - boundaryRadius;
+      ball.x -= (dx / dist) * penetration;
+      ball.y -= (dy / dist) * penetration;
+
+      const nx = dx / dist;
+      const ny = dy / dist;
+
+      const v_dot_n = ball.vx * nx + ball.vy * ny;
+      const v_normal_x = v_dot_n * nx;
+      const v_normal_y = v_dot_n * ny;
+      const v_tangent_x = ball.vx - v_normal_x;
+      const v_tangent_y = ball.vy - v_normal_y;
+
+      const v_normal_x_new = -v_normal_x * COEFFICIENT_OF_RESTITUTION;
+      const v_normal_y_new = -v_normal_y * COEFFICIENT_OF_RESTITUTION;
+
+      ball.vx = v_normal_x_new + v_tangent_x;
+      ball.vy = v_normal_y_new + v_tangent_y;
+    }
   }
 
   // --- Shrink rings and spawn new outer rings ---
@@ -521,6 +543,13 @@ function update(dt) {
       color: `hsla(${rand(0, 360)}, 75%, 65%, 0.8)`,
       visible: true
     });
+  }
+
+  // --- Win Condition Check ---
+  const allRingsDestroyed = rings.every(ring => !ring.visible);
+  if (allRingsDestroyed) {
+    initializeRings();
+    resetBall();
   }
 
   // -------------- Update Sparkles ---------------
